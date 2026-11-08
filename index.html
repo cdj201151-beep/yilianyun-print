@@ -42,6 +42,7 @@ button:disabled{opacity:0.5;cursor:not-allowed}
 .msg{margin-top:12px;padding:10px;border-radius:8px;font-size:14px;display:none}
 .msg-success{background:#e8f9ee;color:#28a745}
 .msg-error{background:#ffe9e9;color:#dc3545}
+.footer{text-align:center;font-size:12px;color:#999;padding:24px 0 32px;line-height:1.6}
 </style>
 </head>
 <body>
@@ -85,15 +86,15 @@ button:disabled{opacity:0.5;cursor:not-allowed}
     <div class="row">
       <div class="col">
         <label class="label">终端名称</label>
-        <input id="devName" placeholder="例如：前台小票机">
+        <input id="devName" placeholder="请输入终端名称">
       </div>
       <div class="col">
         <label class="label">终端号 MACHINE_CODE</label>
-        <input id="devCode" placeholder="4004974681">
+        <input id="devCode" placeholder="请输入终端号">
       </div>
       <div class="col">
         <label class="label">终端密钥 MSIGN</label>
-        <input id="devSign" placeholder="616390347999">
+        <input id="devSign" placeholder="请输入终端密钥">
       </div>
     </div>
     <div class="btns">
@@ -101,6 +102,8 @@ button:disabled{opacity:0.5;cursor:not-allowed}
     </div>
   </div>
 </div>
+
+<footer class="footer">Copyright © 2026 Luohe Inc. 保留所有权利。</footer>
 
 <script>
 const $ = s => document.querySelector(s)
@@ -112,14 +115,14 @@ const YLY_APIKEY = "e1b8752f3850e203e40fd29cccb1acc700b1057b"
 const STORAGE_KEY = "yly_device_list"
 const API_URL = "https://open-api.10ss.net/v2/print"
 
-// 读取本地存储，没有则用默认设备
-let deviceList = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [
-  {
-    name: "默认打印机",
-    code: "4004974681",
-    sign: "616390347999"
-  }
-]
+// 读取本地存储，没有则为空列表（无默认打印机）
+let deviceList = []
+try{
+  const saved = JSON.parse(localStorage.getItem(STORAGE_KEY))
+  if(Array.isArray(saved)) deviceList = saved
+}catch(e){ deviceList = [] }
+// 清理旧版本残留的演示终端
+deviceList = deviceList.filter(d => !(d && d.code === "4004974681" && d.sign === "616390347999"))
 
 // 保存到本地存储
 function saveDeviceList(){
@@ -151,6 +154,16 @@ function showMsg(text, isOk){
 function renderDevice(){
   deviceSelect.innerHTML = ""
   deviceListBox.innerHTML = ""
+  if(deviceList.length === 0){
+    const opt = document.createElement("option")
+    opt.value = ""
+    opt.innerText = "暂无终端，请先添加"
+    deviceSelect.appendChild(opt)
+    deviceSelect.disabled = true
+    deviceListBox.innerText = "尚未添加任何打印机终端，点击下方「添加终端」开始配置。"
+    return
+  }
+  deviceSelect.disabled = false
   deviceList.forEach((item,idx)=>{
     const opt = document.createElement("option")
     opt.value = idx
@@ -197,9 +210,13 @@ btnConfirmAdd.onclick = ()=>{
 
 // 删除选中终端
 btnDelDev.onclick = ()=>{
+  if(deviceList.length === 0){
+    showMsg("当前没有可删除的终端",false)
+    return
+  }
   const idx = Number(deviceSelect.value)
-  if(deviceList.length <= 1){
-    showMsg("至少保留一台终端",false)
+  if(isNaN(idx) || idx < 0 || idx >= deviceList.length){
+    showMsg("请先选择要删除的终端",false)
     return
   }
   deviceList.splice(idx,1)
@@ -217,6 +234,10 @@ btnPrint.onclick = async ()=>{
   }
   const selIdx = Number(deviceSelect.value)
   const dev = deviceList[selIdx]
+  if(!dev){
+    showMsg("请先添加并选择打印机终端",false)
+    return
+  }
   btnPrint.disabled = true
   try{
     const timestamp = Math.floor(Date.now()/1000).toString()

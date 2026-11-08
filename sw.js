@@ -1,4 +1,4 @@
-const CACHE_NAME = "yly-print-v1";
+const CACHE_NAME = "yly-print-v2";
 const CORE_ASSETS = [
   "./",
   "./index.html",
