@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="theme-color" content="#9B1D6B"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="易联云打印"/>
+<link rel="manifest" href="manifest.json"/>
+<link rel="icon" href="favicon.png" type="image/png"/>
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png"/>
+<link rel="apple-touch-icon-precomposed" href="icons/apple-touch-icon.png"/>
+<title>易联云多终端打印</title>
+<!-- CryptoJS 用于MD5签名，Safari正常支持 -->
+<script src="https://cdn.jsdelivr.net/npm/crypto-js@4.2.0/crypto-js.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif}
+body{background:#f5f7fa;padding:20px;max-width:760px;margin:0 auto;color:#333}
+.header{margin-bottom:20px}
+h1{font-size:22px;font-weight:600;margin-bottom:8px}
+.tip{color:#666;font-size:14px}
+.card{background:#fff;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,0.08);padding:20px;margin-bottom:16px}
+.label{display:block;margin-bottom:8px;font-weight:500;font-size:15px}
+input,textarea,select{width:100%;padding:12px;border:1px solid #ddd;border-radius:10px;font-size:16px;outline:none;transition:border .2s;background:#fff}
+input:focus,textarea:focus,select:focus{border-color:#007aff}
+textarea{min-height:220px;line-height:1.6;resize:vertical}
+.row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.col{flex:1;min-width:180px}
+.btns{margin-top:16px;display:flex;gap:12px;flex-wrap:wrap}
+button{flex:1;min-width:110px;padding:13px;border:none;border-radius:10px;font-size:15px;font-weight:500;cursor:pointer;transition:opacity .2s}
+.btn-print{background:#007aff;color:#fff}
+.btn-toggle-add{background:#34c759;color:#fff}
+.btn-confirm-add{background:#007aff;color:#fff}
+.btn-del{background:#ff3b30;color:#fff}
+.btn-clear{background:#eee;color:#333}
+button:active{opacity:0.85}
+button:disabled{opacity:0.5;cursor:not-allowed}
+.info{margin-top:10px;padding:12px;background:#f8f8f8;border-radius:10px;font-size:13px;color:#555;word-break:break-all}
+.device-item{padding:10px;border:1px solid #eee;border-radius:8px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.hide-panel{display:none;margin-top:16px}
+.msg{margin-top:12px;padding:10px;border-radius:8px;font-size:14px;display:none}
+.msg-success{background:#e8f9ee;color:#28a745}
+.msg-error{background:#ffe9e9;color:#dc3545}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>易联云多终端打印</h1>
+  <div class="tip">支持添加、切换多个打印机终端，兼容Safari，终端自动本地保存</div>
+</div>
+
+<!-- 打印内容区（最上方） -->
+<div class="card">
+  <label class="label">打印内容</label>
+  <textarea id="printContent" placeholder="在这里输入小票打印内容...
+示例：
+欢迎光临
+----------------
+商品A    10.00
+商品B    25.00
+----------------
+合计：35.00
+谢谢惠顾！"></textarea>
+  <div class="btns">
+    <button class="btn-print" id="btnPrint">发送打印</button>
+    <button class="btn-clear" id="btnClear">清空内容</button>
+  </div>
+  <div id="msgBox" class="msg"></div>
+</div>
+
+<!-- 终端选择 -->
+<div class="card">
+  <div class="label">选择打印机</div>
+  <select id="deviceSelect">
+    <!-- JS动态渲染 -->
+  </select>
+  <div id="deviceListBox" class="info" style="margin-top:12px"></div>
+  <div class="btns" style="margin-top:16px">
+    <button class="btn-toggle-add" id="btnToggleAdd">添加终端</button>
+    <button class="btn-del" id="btnDelDev">删除选中终端</button>
+  </div>
+  <!-- 点击添加终端才显示的输入面板 -->
+  <div id="addPanel" class="hide-panel">
+    <div class="row">
+      <div class="col">
+        <label class="label">终端名称</label>
+        <input id="devName" placeholder="例如：前台小票机">
+      </div>
+      <div class="col">
+        <label class="label">终端号 MACHINE_CODE</label>
+        <input id="devCode" placeholder="4004974681">
+      </div>
+      <div class="col">
+        <label class="label">终端密钥 MSIGN</label>
+        <input id="devSign" placeholder="616390347999">
+      </div>
+    </div>
+    <div class="btns">
+      <button class="btn-confirm-add" id="btnConfirmAdd">确认添加</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s)
+const $$ = s => document.querySelectorAll(s)
+
+// ========== 全局参数（隐藏，前端不展示） ==========
+const YLY_PARTNER = "43422300"
+const YLY_APIKEY = "e1b8752f3850e203e40fd29cccb1acc700b1057b"
+const STORAGE_KEY = "yly_device_list"
+const API_URL = "https://open-api.10ss.net/v2/print"
+
+// 读取本地存储，没有则用默认设备
+let deviceList = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [
+  {
+    name: "默认打印机",
+    code: "4004974681",
+    sign: "616390347999"
+  }
+]
+
+// 保存到本地存储
+function saveDeviceList(){
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(deviceList))
+}
+
+const deviceSelect = $("#deviceSelect")
+const deviceListBox = $("#deviceListBox")
+const devName = $("#devName")
+const devCode = $("#devCode")
+const devSign = $("#devSign")
+const printContent = $("#printContent")
+const btnToggleAdd = $("#btnToggleAdd")
+const btnConfirmAdd = $("#btnConfirmAdd")
+const btnDelDev = $("#btnDelDev")
+const btnPrint = $("#btnPrint")
+const btnClear = $("#btnClear")
+const addPanel = $("#addPanel")
+const msgBox = $("#msgBox")
+
+function showMsg(text, isOk){
+  msgBox.style.display = "block"
+  msgBox.className = "msg " + (isOk ? "msg-success":"msg-error")
+  msgBox.innerText = text
+  setTimeout(()=>msgBox.style.display="none",3000)
+}
+
+// 渲染下拉+列表
+function renderDevice(){
+  deviceSelect.innerHTML = ""
+  deviceListBox.innerHTML = ""
+  deviceList.forEach((item,idx)=>{
+    const opt = document.createElement("option")
+    opt.value = idx
+    opt.innerText = `【${item.name}】${item.code}`
+    deviceSelect.appendChild(opt)
+
+    const div = document.createElement("div")
+    div.className = "device-item"
+    div.innerHTML = `<span>${item.name}｜${item.code}</span>`
+    deviceListBox.appendChild(div)
+  })
+}
+
+// 展开/收起添加面板
+btnToggleAdd.onclick = ()=>{
+  if(addPanel.style.display === "block"){
+    addPanel.style.display = "none"
+    devName.value=""
+    devCode.value=""
+    devSign.value=""
+  }else{
+    addPanel.style.display = "block"
+  }
+}
+
+// 确认添加终端
+btnConfirmAdd.onclick = ()=>{
+  const name = devName.value.trim()
+  const code = devCode.value.trim()
+  const sign = devSign.value.trim()
+  if(!name || !code || !sign){
+    showMsg("终端名称、终端号、终端密钥不能为空",false)
+    return
+  }
+  deviceList.push({name,code,sign})
+  saveDeviceList()
+  renderDevice()
+  addPanel.style.display = "none"
+  devName.value=""
+  devCode.value=""
+  devSign.value=""
+  showMsg("终端添加成功",true)
+}
+
+// 删除选中终端
+btnDelDev.onclick = ()=>{
+  const idx = Number(deviceSelect.value)
+  if(deviceList.length <= 1){
+    showMsg("至少保留一台终端",false)
+    return
+  }
+  deviceList.splice(idx,1)
+  saveDeviceList()
+  renderDevice()
+  showMsg("终端已删除",true)
+}
+
+// 易联云打印接口
+btnPrint.onclick = async ()=>{
+  const text = printContent.value.trim()
+  if(!text){
+    showMsg("请输入打印内容",false)
+    return
+  }
+  const selIdx = Number(deviceSelect.value)
+  const dev = deviceList[selIdx]
+  btnPrint.disabled = true
+  try{
+    const timestamp = Math.floor(Date.now()/1000).toString()
+    const nonce = Math.random().toString(36).slice(2)
+    const signRaw = YLY_APIKEY + "timestamp" + timestamp + "nonce" + nonce + "machine_code" + dev.code + "msign" + dev.sign
+    const sign = CryptoJS.MD5(signRaw).toString()
+
+    const payload = {
+      partner: YLY_PARTNER,
+      machine_code: dev.code,
+      timestamp,
+      nonce,
+      sign,
+      content: text
+    }
+    const res = await fetch(API_URL,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    })
+    const ret = await res.json()
+    if(ret.error === 0){
+      showMsg("✅ 打印指令下发成功！",true)
+    }else{
+      showMsg("❌ 打印失败："+ret.error_description,false)
+    }
+  }catch(e){
+    showMsg("❌ 请求异常："+e.message,false)
+  }finally{
+    btnPrint.disabled = false
+  }
+}
+
+btnClear.onclick = ()=>{
+  printContent.value=""
+  printContent.focus()
+  msgBox.style.display="none"
+}
+
+// 初始化
+renderDevice()
+</script>
+<script>
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js", { scope: "./" }).catch(()=>{});
+  });
+}
+</script>
+</body>
+</html>
