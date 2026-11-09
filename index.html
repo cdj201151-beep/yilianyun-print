@@ -295,7 +295,14 @@ btnPrint.onclick = async ()=>{
       res = await fetch(PRINT_URL, options)
     }
 
-    const retText = (await res.text()).trim()
+    let retText = (await res.text()).trim()
+    // 兼容"未开启集成响应"的云函数代理：返回体是 {"statusCode":200,"body":"..."} 包装时先解包
+    try{
+      const wrapped = JSON.parse(retText)
+      if(wrapped && typeof wrapped.body === "string" && wrapped.body.trim().charAt(0) === "{"){
+        retText = wrapped.body.trim()
+      }
+    }catch(e){}
     if(retText.charAt(0) === "{"){
       const ret = JSON.parse(retText)
       const st = String(ret.state)
