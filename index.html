@@ -43,6 +43,9 @@ button:disabled{opacity:0.5;cursor:not-allowed}
 .msg-success{background:#e8f9ee;color:#28a745}
 .msg-error{background:#ffe9e9;color:#dc3545}
 .footer{text-align:center;font-size:12px;color:#999;padding:24px 0 32px;line-height:1.6}
+.api-tools{margin-top:10px;text-align:right}
+.api-tools a{font-size:12px;color:#007aff;text-decoration:none}
+.proxy-tip{font-size:12px;color:#999;margin-top:8px;line-height:1.5}
 </style>
 </head>
 <body>
@@ -68,6 +71,16 @@ button:disabled{opacity:0.5;cursor:not-allowed}
     <button class="btn-clear" id="btnClear">清空内容</button>
   </div>
   <div id="msgBox" class="msg"></div>
+  <div class="api-tools"><a href="javascript:;" id="btnProxyToggle">接口设置</a></div>
+  <div id="proxyPanel" class="hide-panel">
+    <label class="label">打印接口代理地址（可选）</label>
+    <input id="proxyUrl" placeholder="https://your-proxy.workers.dev/?url=">
+    <div class="proxy-tip">易联云打印接口只有 HTTP 非标准端口且无跨域支持，浏览器需经代理访问；部署方法见仓库 README。</div>
+    <div class="btns" style="margin-top:12px">
+      <button class="btn-confirm-add" id="btnSaveProxy">保存代理</button>
+      <button class="btn-clear" id="btnClearProxy">清除</button>
+    </div>
+  </div>
 </div>
 
 <!-- 终端选择 -->
@@ -113,7 +126,13 @@ const $$ = s => document.querySelectorAll(s)
 const YLY_PARTNER = "43422300"
 const YLY_APIKEY = "e1b8752f3850e203e40fd29cccb1acc700b1057b"
 const STORAGE_KEY = "yly_device_list"
-const API_URL = "https://open-api.10ss.net/v2/print"
+// ========== 打印接口配置（老版 partner 接口，实测可用） ==========
+const PRINT_URL = "http://open.10ss.net:8888/print.php"
+// 可选：代理地址前缀，形如 "https://your-proxy.workers.dev/?url="
+// HTTPS 页面直连会被浏览器拦截，配置代理后打印才可用
+const API_PROXY_KEY = "yly_api_proxy"
+let PRINT_PROXY = localStorage.getItem(API_PROXY_KEY) || ""
+
 
 // 读取本地存储，没有则为空列表（无默认打印机）
 let deviceList = []
@@ -142,6 +161,12 @@ const btnPrint = $("#btnPrint")
 const btnClear = $("#btnClear")
 const addPanel = $("#addPanel")
 const msgBox = $("#msgBox")
+const btnProxyToggle = $("#btnProxyToggle")
+const proxyPanel = $("#proxyPanel")
+const proxyUrlInput = $("#proxyUrl")
+const btnSaveProxy = $("#btnSaveProxy")
+const btnClearProxy = $("#btnClearProxy")
+proxyUrlInput.value = PRINT_PROXY
 
 function showMsg(text, isOk){
   msgBox.style.display = "block"
@@ -241,34 +266,85 @@ btnPrint.onclick = async ()=>{
   btnPrint.disabled = true
   try{
     const timestamp = Math.floor(Date.now()/1000).toString()
-    const nonce = Math.random().toString(36).slice(2)
-    const signRaw = YLY_APIKEY + "timestamp" + timestamp + "nonce" + nonce + "machine_code" + dev.code + "msign" + dev.sign
-    const sign = CryptoJS.MD5(signRaw).toString()
+    const sign = CryptoJS.MD5(
+      YLY_APIKEY + "machine_code" + dev.code + "partner" + YLY_PARTNER + "time" + timestamp + dev.sign
+    ).toString().toUpperCase()
 
-    const payload = {
+    const body = new URLSearchParams({
       partner: YLY_PARTNER,
       machine_code: dev.code,
-      timestamp,
-      nonce,
-      sign,
+      time: timestamp,
+      sign: sign,
       content: text
-    }
-    const res = await fetch(API_URL,{
-      method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body:JSON.stringify(payload)
     })
-    const ret = await res.json()
-    if(ret.error === 0){
-      showMsg("✅ 打印指令下发成功！",true)
+    const options = {
+      method:"POST",
+      headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body: body.toString()
+    }
+
+    // 通道1：代理（已配置则优先）
+    let res = null
+    if(PRINT_PROXY){
+      try{
+        res = await fetch(PRINT_PROXY + encodeURIComponent(PRINT_URL), options)
+      }catch(e){ res = null }
+    }
+    // 通道2：直连（仅非 HTTPS 环境可能成功）
+    if(!res || !res.ok){
+      res = await fetch(PRINT_URL, options)
+    }
+
+    const retText = (await res.text()).trim()
+    if(retText.charAt(0) === "{"){
+      const ret = JSON.parse(retText)
+      const st = String(ret.state)
+      if(st === "1"){
+        showMsg("✅ 打印指令已下发"+(ret.id ? "（单号 "+ret.id+"）" : "")+"！",true)
+      }else if(st === "2"){
+        showMsg("❌ 提交超时（时间戳超过3分钟），请校准手机时间后重试",false)
+      }else if(st === "3"){
+        showMsg("❌ 打印失败：参数有误，请检查终端号/密钥",false)
+      }else if(st === "4"){
+        showMsg("❌ 打印失败：sign 签名验证失败，请检查终端密钥",false)
+      }else{
+        showMsg("❌ 打印失败："+retText,false)
+      }
     }else{
-      showMsg("❌ 打印失败："+ret.error_description,false)
+      showMsg("❌ 打印失败：接口返回异常 "+retText.slice(0,50),false)
     }
   }catch(e){
-    showMsg("❌ 请求异常："+e.message,false)
+    if(PRINT_PROXY){
+      showMsg("❌ 请求异常："+e.message+"（请检查代理地址是否可用）",false)
+    }else{
+      showMsg("❌ 请求异常："+e.message+"（浏览器跨域限制，请点下方「接口设置」配置代理）",false)
+    }
   }finally{
     btnPrint.disabled = false
   }
+}
+
+// 接口设置：打印代理地址（独立 key，不影响终端数据）
+btnProxyToggle.onclick = ()=>{
+  proxyPanel.style.display = proxyPanel.style.display === "block" ? "none" : "block"
+}
+btnSaveProxy.onclick = ()=>{
+  const v = proxyUrlInput.value.trim()
+  if(v && !/^https?:\/\//i.test(v)){
+    showMsg("代理地址需以 http:// 或 https:// 开头", false)
+    return
+  }
+  PRINT_PROXY = v
+  if(v) localStorage.setItem(API_PROXY_KEY, v)
+  else localStorage.removeItem(API_PROXY_KEY)
+  proxyPanel.style.display = "none"
+  showMsg(v ? "代理已保存" : "代理已清除", true)
+}
+btnClearProxy.onclick = ()=>{
+  proxyUrlInput.value = ""
+  PRINT_PROXY = ""
+  localStorage.removeItem(API_PROXY_KEY)
+  showMsg("代理已清除", true)
 }
 
 btnClear.onclick = ()=>{
